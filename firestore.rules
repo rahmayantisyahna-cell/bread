@@ -1,0 +1,75 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ADMIN
+    match /admins/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // PESANAN
+    match /orders/{id} {
+      allow read: if isAdmin() ||
+        (signedIn() && resource.data.ownerUid == request.auth.uid);
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.status in [
+          'Menunggu Pembayaran',
+          'Menunggu Konfirmasi'
+        ];
+
+      allow update: if isAdmin() ||
+        (signedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && resource.data.status == 'Menunggu Pembayaran'
+        && request.resource.data.status == 'Menunggu Verifikasi'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'updatedAt']));
+
+      allow delete: if isAdmin();
+    }
+
+    // STOK DAN HARGA
+    match /appData/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      allow update: if docId == 'stock'
+        && signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['values', 'updatedAt']);
+    }
+
+    // ULASAN
+    match /reviews/{id} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 40
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 400
+        && request.resource.data.pid is string;
+
+      allow delete: if isAdmin();
+      allow update: if false;
+    }
+  }
+}
